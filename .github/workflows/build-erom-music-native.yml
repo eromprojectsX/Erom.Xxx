@@ -22,77 +22,14 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Gerar projeto Android nativo
+      - name: Preparar projeto Android
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p native-build/app/src/main/java/br/com/erommusic/nativeapp native-build/app/src/main/res/values
-          cp erom-music-native/MainActivity.kt native-build/app/src/main/java/br/com/erommusic/nativeapp/MainActivity.kt
-          cat > native-build/settings.gradle <<'EOF'
-          pluginManagement { repositories { google(); mavenCentral(); gradlePluginPortal() } }
-          dependencyResolutionManagement { repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS); repositories { google(); mavenCentral() } }
-          rootProject.name = "EromMusicNative"
-          include(":app")
-          EOF
-          cat > native-build/build.gradle <<'EOF'
-          plugins {
-              id 'com.android.application' version '8.7.3' apply false
-              id 'org.jetbrains.kotlin.android' version '2.0.21' apply false
-              id 'org.jetbrains.kotlin.plugin.compose' version '2.0.21' apply false
-          }
-          EOF
-          cat > native-build/gradle.properties <<'EOF'
-          org.gradle.jvmargs=-Xmx2g -Dfile.encoding=UTF-8
-          android.useAndroidX=true
-          kotlin.code.style=official
-          EOF
-          cat > native-build/app/build.gradle <<'EOF'
-          plugins {
-              id 'com.android.application'
-              id 'org.jetbrains.kotlin.android'
-              id 'org.jetbrains.kotlin.plugin.compose'
-          }
-          android {
-              namespace 'br.com.erommusic.nativeapp'
-              compileSdk 35
-              defaultConfig {
-                  applicationId 'br.com.erommusic.nativeapp'
-                  minSdk 23
-                  targetSdk 35
-                  versionCode 1
-                  versionName '1.0.0'
-              }
-              buildFeatures { compose true }
-              compileOptions {
-                  sourceCompatibility JavaVersion.VERSION_17
-                  targetCompatibility JavaVersion.VERSION_17
-              }
-              kotlinOptions { jvmTarget = '17' }
-          }
-          dependencies {
-              implementation platform('androidx.compose:compose-bom:2024.12.01')
-              implementation 'androidx.activity:activity-compose:1.10.0'
-              implementation 'androidx.compose.ui:ui'
-              implementation 'androidx.compose.ui:ui-tooling-preview'
-              implementation 'androidx.compose.material3:material3'
-              implementation 'androidx.compose.material:material-icons-extended'
-              implementation 'androidx.navigation:navigation-compose:2.8.5'
-              implementation 'androidx.lifecycle:lifecycle-runtime-ktx:2.8.7'
-          }
-          EOF
-          cat > native-build/app/src/main/res/values/strings.xml <<'EOF'
-          <resources><string name="app_name">Erom Música</string></resources>
-          EOF
-          cat > native-build/app/src/main/AndroidManifest.xml <<'EOF'
-          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-            <uses-permission android:name="android.permission.INTERNET"/>
-            <application android:theme="@android:style/Theme.Material.Light.NoActionBar" android:label="@string/app_name" android:usesCleartextTraffic="false" android:allowBackup="true">
-              <activity android:name="br.com.erommusic.nativeapp.MainActivity" android:exported="true">
-                <intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter>
-              </activity>
-            </application>
-          </manifest>
-          EOF
+          test -s erom-music-native/app/src/main/java/br/com/erommusic/nativeapp/MainActivity.kt
+          test -s erom-music-native/app/src/main/AndroidManifest.xml
+          test -s erom-music-native/app/build.gradle
+          echo "Projeto Android nativo validado."
 
       - name: Instalar componentes Android
         shell: bash
@@ -109,8 +46,8 @@ jobs:
           set -euo pipefail
           curl -fsSL https://services.gradle.org/distributions/gradle-8.9-bin.zip -o /tmp/gradle.zip
           unzip -q /tmp/gradle.zip -d /tmp
-          /tmp/gradle-8.9/bin/gradle --no-daemon --stacktrace -p native-build assembleDebug
-          APK=native-build/app/build/outputs/apk/debug/app-debug.apk
+          /tmp/gradle-8.9/bin/gradle --no-daemon --stacktrace -p erom-music-native assembleDebug
+          APK=erom-music-native/app/build/outputs/apk/debug/app-debug.apk
           test -s "$APK" || { echo "::error::APK nativo não foi gerado"; exit 1; }
           unzip -l "$APK" | grep -q 'classes.dex'
           mkdir -p output
