@@ -41,7 +41,11 @@ jobs:
               id 'org.jetbrains.kotlin.plugin.compose' version '2.0.21' apply false
           }
           EOF
-          echo "org.gradle.jvmargs=-Xmx2g -Dfile.encoding=UTF-8" > native-build/gradle.properties
+          cat > native-build/gradle.properties <<'EOF'
+org.gradle.jvmargs=-Xmx2g -Dfile.encoding=UTF-8
+android.useAndroidX=true
+kotlin.code.style=official
+EOF
           cat > native-build/app/build.gradle <<'EOF'
           plugins {
               id 'com.android.application'
