@@ -1,6 +1,9 @@
 name: Build Erom Música Original Frontend APK
 
 on:
+  push:
+    paths:
+      - ".github/workflows/build-erom-music-original-frontend.yml"
   workflow_dispatch:
     inputs:
       pagina_inicial:
