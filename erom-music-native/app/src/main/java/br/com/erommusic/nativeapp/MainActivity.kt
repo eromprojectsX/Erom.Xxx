@@ -101,7 +101,7 @@ private fun EromMusicApp() {
                 }
                 when (selectedTab) {
                     "Início" -> HomeScreen(onOpenPlaylist = { openSpotifyPlaylist(context) }, onGoLibrary = { selectedTab = "Sua Biblioteca" })
-                    "Buscar" -> SearchScreen(search, { search = it }, onOpenPlaylist = { openSpotifyPlaylist(context) })
+                    "Buscar" -> SearchScreen(search, { search = it }, onOpenPlaylist = { openSpotifyPlaylist(context) }, onSearchSpotify = { query -> openSpotifySearch(context, query) })
                     else -> LibraryScreen(onOpenPlaylist = { openSpotifyPlaylist(context) }, onGoHome = { selectedTab = "Início" })
                 }
             }
@@ -176,7 +176,7 @@ private fun PlaylistCard(onOpen: () -> Unit) {
 }
 
 @Composable
-private fun SearchScreen(query: String, onQueryChange: (String) -> Unit, onOpenPlaylist: () -> Unit) {
+private fun SearchScreen(query: String, onQueryChange: (String) -> Unit, onOpenPlaylist: () -> Unit, onSearchSpotify: (String) -> Unit) {
     Column(Modifier.fillMaxSize().padding(horizontal = 20.dp)) {
         Text("Buscar", color = White, fontSize = 28.sp, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(16.dp))
@@ -199,7 +199,16 @@ private fun SearchScreen(query: String, onQueryChange: (String) -> Unit, onOpenP
         PlaylistCard(onOpenPlaylist)
         if (query.isNotBlank()) {
             Spacer(Modifier.height(12.dp))
-            Text("Para pesquisar o catálogo completo, conecte uma integração de música autorizada.", color = Muted, fontSize = 13.sp)
+            Button(
+                onClick = { onSearchSpotify(query) },
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.buttonColors(containerColor = Green, contentColor = Color.Black)
+            ) {
+                Icon(Icons.Default.Search, null)
+                Spacer(Modifier.width(8.dp))
+                Text("Pesquisar no Spotify")
+            }
+            Text("A busca abre o aplicativo Spotify. A pesquisa de catálogo dentro do Erom requer integração oficial.", color = Muted, fontSize = 12.sp)
         }
     }
 }
@@ -233,6 +242,25 @@ private fun openSpotifyPlaylist(context: Context) {
         Toast.makeText(
             context,
             "Instale o aplicativo Spotify para abrir sua playlist.",
+            Toast.LENGTH_LONG
+        ).show()
+    }
+}
+
+ 
+private fun openSpotifySearch(context: Context, query: String) {
+    val encodedQuery = Uri.encode(query.trim())
+    if (encodedQuery.isBlank()) return
+    val intent = Intent(
+        Intent.ACTION_VIEW,
+        Uri.parse("spotify:search:$encodedQuery")
+    ).setPackage("com.spotify.music")
+    try {
+        context.startActivity(intent)
+    } catch (_: ActivityNotFoundException) {
+        Toast.makeText(
+            context,
+            "Instale o aplicativo Spotify para pesquisar músicas.",
             Toast.LENGTH_LONG
         ).show()
     }
