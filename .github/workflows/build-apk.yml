@@ -1,0 +1,63 @@
+name: Build Erom Music APK
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'Erom-Music-Android-GitHub.zip'
+      - '.github/workflows/build-apk.yml'
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Baixar repositório
+        uses: actions/checkout@v4
+
+      - name: Preparar Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Extrair projeto ZIP
+        run: |
+          mkdir -p projeto
+          unzip -q Erom-Music-Android-GitHub.zip -d projeto
+          echo 'Arquivos encontrados:'
+          find projeto -maxdepth 4 -type f | head -200
+
+      - name: Configurar Gradle se necessário
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Compilar APK
+        shell: bash
+        run: |
+          set -e
+          WRAPPER=$(find projeto -type f -name gradlew -print -quit)
+          if [ -n "$WRAPPER" ]; then
+            chmod +x "$WRAPPER"
+            cd "$(dirname "$WRAPPER")"
+            ./gradlew assembleDebug
+          else
+            BUILD_FILE=$(find projeto -type f \( -name build.gradle -o -name build.gradle.kts \) -print -quit)
+            if [ -z "$BUILD_FILE" ]; then
+              echo 'ERRO: o ZIP não contém gradlew nem build.gradle/build.gradle.kts. É necessário preparar o projeto Android antes de compilar.'
+              exit 1
+            fi
+            cd "$(dirname "$BUILD_FILE")"
+            gradle assembleDebug
+          fi
+
+      - name: Publicar APK para baixar
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Erom-Music-debug-apk
+          path: projeto/**/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+          retention-days: 7
