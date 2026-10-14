@@ -25,38 +25,24 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Extrair projeto Android
+      - name: Extrair pacote completo EROM BOX
         shell: bash
         run: |
           set -euo pipefail
-          ZIP="erom-box/EromBox-Android-Studio.zip"
-          test -s "$ZIP" || { echo "::error::Arquivo do projeto Android não encontrado: $ZIP"; exit 1; }
-          mkdir -p android-project
-          unzip -q "$ZIP" -d android-project
-          echo "Conteúdo extraído:"
-          find android-project -maxdepth 4 -type f | sort | head -200
-
-      - name: Localizar projeto Gradle
-        id: locate
-        shell: bash
-        run: |
-          set -euo pipefail
-          ROOT=""
-          if [ -f android-project/gradlew ]; then ROOT="android-project"; fi
-          if [ -z "$ROOT" ]; then
-            WRAPPER=$(find android-project -type f -name gradlew -print -quit)
-            if [ -n "$WRAPPER" ]; then ROOT="$(dirname "$WRAPPER")"; fi
-          fi
-          if [ -z "$ROOT" ]; then
-            BUILD=$(find android-project -type f \( -name build.gradle -o -name build.gradle.kts \) -print -quit)
-            if [ -n "$BUILD" ]; then ROOT="$(dirname "$BUILD")"; fi
-          fi
-          if [ -z "$ROOT" ]; then
-            echo "::error::O ZIP não contém gradlew nem build.gradle/build.gradle.kts. É necessário um projeto Android Studio completo."
-            exit 1
-          fi
-          echo "root=$ROOT" >> "$GITHUB_OUTPUT"
-          echo "Projeto detectado em: $ROOT"
+          ZIP="erom-box/EROM-BOX-ATUALIZADO.zip"
+          test -s "$ZIP" || { echo "::error::Pacote completo EROM BOX não encontrado"; exit 1; }
+          mkdir -p source
+          unzip -q "$ZIP" -d source
+          ROOT="source/EROM-BOX-ATUALIZADO"
+          test -s "$ROOT/android/app/src/main/java/br/com/erombox/app/MainActivity.java"
+          test -s "$ROOT/android/app/build.gradle"
+          test -s "$ROOT/public/index.html"
+          # Incluir a interface e os recursos web dentro do pacote Android para uso local/offline.
+          mkdir -p "$ROOT/android/app/src/main/assets/erombox"
+          cp -R "$ROOT/public/." "$ROOT/android/app/src/main/assets/erombox/"
+          echo "Arquivos da interface incluídos:"
+          find "$ROOT/android/app/src/main/assets/erombox" -maxdepth 2 -type f | sort | head -100
+          echo "ANDROID_ROOT=$ROOT/android" >> "$GITHUB_ENV"
 
       - name: Instalar componentes Android
         shell: bash
@@ -74,31 +60,22 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          ROOT="${{ steps.locate.outputs.root }}"
-          cd "$ROOT"
-          if [ -f ./gradlew ]; then
-            chmod +x ./gradlew
-            ./gradlew --no-daemon --stacktrace assembleDebug
-          else
-            echo "Sem Gradle Wrapper; usando Gradle instalado."
-            curl -fsSL https://services.gradle.org/distributions/gradle-8.9-bin.zip -o /tmp/gradle.zip
-            unzip -q /tmp/gradle.zip -d /tmp
-            /tmp/gradle-8.9/bin/gradle --no-daemon --stacktrace assembleDebug
-          fi
+          cd "$ANDROID_ROOT"
+          curl -fsSL https://services.gradle.org/distributions/gradle-8.9-bin.zip -o /tmp/gradle.zip
+          unzip -q /tmp/gradle.zip -d /tmp
+          /tmp/gradle-8.9/bin/gradle --no-daemon --stacktrace assembleDebug
 
-      - name: Encontrar e validar APK
-        id: apk
+      - name: Validar APK e tamanho
         shell: bash
         run: |
           set -euo pipefail
-          APK=$(find "${{ steps.locate.outputs.root }}" -type f -path "*/build/outputs/apk/*/*.apk" -print -quit)
-          if [ -z "$APK" ]; then
-            echo "::error::A compilação terminou sem gerar APK."
-            exit 1
-          fi
+          APK=$(find "$ANDROID_ROOT" -type f -path "*/build/outputs/apk/*/*.apk" -print -quit)
+          test -n "$APK" || { echo "::error::Nenhum APK foi gerado"; exit 1; }
           mkdir -p output
           cp "$APK" output/EROM-BOX.apk
           ls -lh output/EROM-BOX.apk
+          test "$(stat -c%s output/EROM-BOX.apk)" -gt 50000 || { echo "::error::APK pequeno demais; verifique se os recursos completos foram empacotados"; exit 1; }
+          unzip -l output/EROM-BOX.apk | grep -q "assets/erombox/index.html" || { echo "::error::Interface EROM BOX não foi incluída no APK"; exit 1; }
 
       - name: Disponibilizar APK para baixar
         uses: actions/upload-artifact@v4
