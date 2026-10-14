@@ -1,4 +1,4 @@
-name: Build EROM BOX Native Android APK
+name: Build EROM BOX Native Offline APK
 on:
   workflow_dispatch:
   push:
@@ -17,44 +17,11 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
-      - name: Extract Supabase public configuration
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p /tmp/erom-source
-          unzip -q erom-box/EROM-BOX-ATUALIZADO.zip -d /tmp/erom-source
-          python3 - <<'PY'
-          import pathlib,re,html
-          root=pathlib.Path('/tmp/erom-source')
-          texts=[]
-          for p in root.rglob('*'):
-            if p.is_file() and p.stat().st_size < 5000000:
-              try: texts.append(p.read_text(errors='ignore'))
-              except: pass
-          blob='\n'.join(texts)
-          urls=re.findall(r'https://[^\s"' + "'" + r'<>]+',blob)
-          urls=[u.rstrip(');,\\\\') for u in urls if 'supabase' in u.lower()]
-          keys=re.findall(r'(?:eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}|sb_publishable_[A-Za-z0-9_-]{10,})',blob)
-          if not urls or not keys:
-            print('Arquivos que mencionam Supabase:')
-            for p in root.rglob('*'):
-              if p.is_file() and p.stat().st_size < 5000000:
-                try:
-                  t=p.read_text(errors='ignore')
-                  if 'supabase' in t.lower() or 'anon_key' in t.lower() or 'publishable' in t.lower(): print(str(p))
-                except: pass
-            raise SystemExit('Não foi possível localizar URL e chave pública do Supabase no pacote-fonte.')
-          from pathlib import Path
-          res=Path('native-build/app/src/main/res/values');res.mkdir(parents=True,exist_ok=True)
-          def esc(s): return s.replace('&','&amp;').replace('<','&lt;').replace('"','\\\"')
-          (res/'strings.xml').write_text('<?xml version="1.0" encoding="utf-8"?>\n<resources><string name="app_name">EROM BOX</string><string name="supabase_url">'+urls[0]+'</string><string name="supabase_anon_key">'+keys[0]+'</string></resources>')
-          print('Configuração pública Supabase encontrada; chave não será impressa nos logs.')
-          PY
       - name: Generate native Android project
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p native-build/app/src/main/java/br/com/erombox/nativeapp
+          mkdir -p native-build/app/src/main/java/br/com/erombox/nativeapp native-build/app/src/main/res/values
           cp erom-box/native-src/MainActivity.java native-build/app/src/main/java/br/com/erombox/nativeapp/MainActivity.java
           cat > native-build/settings.gradle <<'EOF'
           pluginManagement { repositories { google(); mavenCentral(); gradlePluginPortal() } }
@@ -62,34 +29,23 @@ jobs:
           rootProject.name = "EROMBOXNative"
           include(":app")
           EOF
-          cat > native-build/build.gradle <<'EOF'
-          plugins {
-              id 'com.android.application' version '8.7.3' apply false
-          }
-          EOF
-          cat > native-build/gradle.properties <<'EOF'
-          org.gradle.jvmargs=-Xmx2g -Dfile.encoding=UTF-8
-          android.useAndroidX=true
-          EOF
+          echo "plugins { id 'com.android.application' version '8.7.3' apply false }" > native-build/build.gradle
+          echo "org.gradle.jvmargs=-Xmx2g -Dfile.encoding=UTF-8" > native-build/gradle.properties
           cat > native-build/app/build.gradle <<'EOF'
           plugins { id 'com.android.application' }
           android {
               namespace 'br.com.erombox.nativeapp'
               compileSdk 35
-              defaultConfig {
-                  applicationId 'br.com.erombox.nativeapp'
-                  minSdk 23
-                  targetSdk 28
-                  versionCode 1
-                  versionName '1.0'
-              }
+              defaultConfig { applicationId 'br.com.erombox.nativeapp'; minSdk 23; targetSdk 28; versionCode 1; versionName '1.0' }
           }
+          EOF
+          cat > native-build/app/src/main/res/values/strings.xml <<'EOF'
+          <resources><string name="app_name">EROM BOX</string></resources>
           EOF
           cat > native-build/app/src/main/AndroidManifest.xml <<'EOF'
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-            <uses-permission android:name="android.permission.INTERNET"/>
-            <application android:theme="@android:style/Theme.Material.NoActionBar" android:label="@string/app_name" android:usesCleartextTraffic="false">
-              <activity android:name="br.com.erombox.nativeapp.MainActivity" android:exported="true" android:screenOrientation="portrait">
+            <application android:theme="@android:style/Theme.Material.NoActionBar" android:label="@string/app_name" android:allowBackup="true">
+              <activity android:name="br.com.erombox.nativeapp.MainActivity" android:exported="true" android:windowSoftInputMode="adjustResize">
                 <intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter>
               </activity>
             </application>
@@ -103,23 +59,20 @@ jobs:
           test -n "$SDKMANAGER"
           yes | "$SDKMANAGER" --licenses >/dev/null || true
           "$SDKMANAGER" --install "platform-tools" "platforms;android-35" "build-tools;35.0.0"
-      - name: Compile native APK
+      - name: Compile standalone native APK
         run: |
           set -euo pipefail
           curl -fsSL https://services.gradle.org/distributions/gradle-8.9-bin.zip -o /tmp/gradle.zip
           unzip -q /tmp/gradle.zip -d /tmp
           /tmp/gradle-8.9/bin/gradle --no-daemon --stacktrace -p native-build assembleDebug
-      - name: Validate standalone native APK
-        run: |
-          set -euo pipefail
           APK=native-build/app/build/outputs/apk/debug/app-debug.apk
           test -s "$APK"
           unzip -l "$APK" | grep -q 'classes.dex'
           mkdir -p output
-          cp "$APK" output/EROM-BOX-NATIVO.apk
-          sha256sum output/EROM-BOX-NATIVO.apk
+          cp "$APK" output/EROM-BOX-NATIVO-OFFLINE.apk
+          sha256sum output/EROM-BOX-NATIVO-OFFLINE.apk
       - uses: actions/upload-artifact@v4
         with:
-          name: EROM-BOX-NATIVO-APK
-          path: output/EROM-BOX-NATIVO.apk
+          name: EROM-BOX-NATIVO-OFFLINE
+          path: output/EROM-BOX-NATIVO-OFFLINE.apk
           retention-days: 14
