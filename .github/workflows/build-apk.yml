@@ -1,10 +1,10 @@
-name: Build Erom Music APK
+name: Build EROM BOX APK
 
 on:
   workflow_dispatch:
   push:
     paths:
-      - "Erom-Music-Android-GitHub.zip"
+      - "erom-box/**"
       - ".github/workflows/build-apk.yml"
 
 permissions:
@@ -12,10 +12,9 @@ permissions:
 
 jobs:
   build:
-    name: Compilar Erom Música
+    name: Compilar EROM BOX
     runs-on: ubuntu-latest
-    timeout-minutes: 40
-
+    timeout-minutes: 45
     steps:
       - name: Baixar repositório
         uses: actions/checkout@v4
@@ -26,275 +25,81 @@ jobs:
           distribution: temurin
           java-version: "17"
 
+      - name: Extrair projeto Android
+        shell: bash
+        run: |
+          set -euo pipefail
+          ZIP="erom-box/EromBox-Android-Studio.zip"
+          test -s "$ZIP" || { echo "::error::Arquivo do projeto Android não encontrado: $ZIP"; exit 1; }
+          mkdir -p android-project
+          unzip -q "$ZIP" -d android-project
+          echo "Conteúdo extraído:"
+          find android-project -maxdepth 4 -type f | sort | head -200
+
+      - name: Localizar projeto Gradle
+        id: locate
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT=""
+          if [ -f android-project/gradlew ]; then ROOT="android-project"; fi
+          if [ -z "$ROOT" ]; then
+            WRAPPER=$(find android-project -type f -name gradlew -print -quit)
+            if [ -n "$WRAPPER" ]; then ROOT="$(dirname "$WRAPPER")"; fi
+          fi
+          if [ -z "$ROOT" ]; then
+            BUILD=$(find android-project -type f \( -name build.gradle -o -name build.gradle.kts \) -print -quit)
+            if [ -n "$BUILD" ]; then ROOT="$(dirname "$BUILD")"; fi
+          fi
+          if [ -z "$ROOT" ]; then
+            echo "::error::O ZIP não contém gradlew nem build.gradle/build.gradle.kts. É necessário um projeto Android Studio completo."
+            exit 1
+          fi
+          echo "root=$ROOT" >> "$GITHUB_OUTPUT"
+          echo "Projeto detectado em: $ROOT"
+
       - name: Configurar Android SDK
         uses: android-actions/setup-android@v3
-        with:
-          packages: "platform-tools"
 
       - name: Instalar componentes Android
         run: |
           yes | sdkmanager --licenses || true
-          sdkmanager --install \
-            "platform-tools" \
-            "platforms;android-35" \
-            "build-tools;35.0.0"
-
-      - name: Configurar Gradle
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: "8.9"
-
-      - name: Extrair site do ZIP
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          ZIP="Erom-Music-Android-GitHub.zip"
-
-          if [ ! -f "$ZIP" ]; then
-            echo "::error::ZIP não encontrado na raiz do repositório."
-            exit 1
-          fi
-
-          rm -rf extraido app
-          mkdir -p extraido app/src/main/assets
-
-          unzip -q "$ZIP" -d extraido \
-            -x '__MACOSX/*' '*.DS_Store'
-
-          cp -r extraido/. app/src/main/assets/
-
-          HTML=$(find app/src/main/assets \
-            -type f -iname 'index.html' -print -quit)
-
-          if [ -z "$HTML" ]; then
-            HTML=$(find app/src/main/assets -type f \
-              \( -iname '*.html' -o -iname '*.htm' \) \
-              | sort | head -n 1 || true)
-          fi
-
-          if [ -z "$HTML" ]; then
-            echo "::error::Nenhum arquivo HTML encontrado no ZIP."
-            exit 1
-          fi
-
-          echo "Página inicial: $HTML"
-
-          if [ "$HTML" != "app/src/main/assets/index.html" ]; then
-            REL="${HTML#app/src/main/assets/}"
-            REL="${REL// /%20}"
-
-            cat > app/src/main/assets/index.html <<EOF
-          <!doctype html>
-          <html lang="pt-BR">
-          <head>
-            <meta charset="utf-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1">
-            <title>Erom Música</title>
-          </head>
-          <body style="background:#000;color:#fff">
-            <script>location.replace("$REL");</script>
-            <a href="$REL">Abrir Erom Música</a>
-          </body>
-          </html>
-          EOF
-          fi
-
-      - name: Criar projeto Android
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          mkdir -p app/src/main/java/com/erom/music
-          mkdir -p app/src/main/res/drawable
-
-          cat > settings.gradle <<'EOF'
-          pluginManagement {
-              repositories {
-                  google()
-                  mavenCentral()
-                  gradlePluginPortal()
-              }
-          }
-          dependencyResolutionManagement {
-              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
-              repositories {
-                  google()
-                  mavenCentral()
-              }
-          }
-          rootProject.name = "EromMusic"
-          include(":app")
-          EOF
-
-          cat > build.gradle <<'EOF'
-          plugins {
-              id "com.android.application" version "8.7.3" apply false
-          }
-          EOF
-
-          cat > gradle.properties <<'EOF'
-          org.gradle.jvmargs=-Xmx2g -Dfile.encoding=UTF-8
-          android.useAndroidX=true
-          EOF
-
-          cat > app/build.gradle <<'EOF'
-          plugins {
-              id "com.android.application"
-          }
-
-          android {
-              namespace "com.erom.music"
-              compileSdk 35
-
-              defaultConfig {
-                  applicationId "com.erom.music"
-                  minSdk 23
-                  targetSdk 35
-                  versionCode 1
-                  versionName "1.0"
-              }
-
-              buildTypes {
-                  debug {
-                      debuggable true
-                  }
-              }
-
-              lint {
-                  abortOnError false
-              }
-          }
-
-          dependencies {
-              implementation "androidx.webkit:webkit:1.12.1"
-          }
-          EOF
-
-          cat > app/src/main/AndroidManifest.xml <<'EOF'
-          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-              <uses-permission android:name="android.permission.INTERNET"/>
-              <application
-                  android:theme="@android:style/Theme.Material.Light.NoActionBar"
-                  android:label="Erom Música"
-                  android:allowBackup="false"
-                  android:usesCleartextTraffic="true">
-                  <activity
-                      android:name=".MainActivity"
-                      android:exported="true"
-                      android:configChanges="orientation|screenSize|keyboardHidden">
-                      <intent-filter>
-                          <action android:name="android.intent.action.MAIN"/>
-                          <category android:name="android.intent.category.LAUNCHER"/>
-                      </intent-filter>
-                  </activity>
-              </application>
-          </manifest>
-          EOF
-
-          cat > app/src/main/java/com/erom/music/MainActivity.java <<'EOF'
-          package com.erom.music;
-
-          import android.app.Activity;
-          import android.os.Bundle;
-          import android.webkit.WebSettings;
-          import android.webkit.WebView;
-          import android.webkit.WebViewClient;
-          import android.webkit.WebResourceRequest;
-          import android.net.Uri;
-          import android.content.Intent;
-          import androidx.webkit.WebViewAssetLoader;
-
-          public class MainActivity extends Activity {
-              private WebView web;
-
-              @Override
-              protected void onCreate(Bundle state) {
-                  super.onCreate(state);
-
-                  web = new WebView(this);
-
-                  WebSettings settings = web.getSettings();
-                  settings.setJavaScriptEnabled(true);
-                  settings.setDomStorageEnabled(true);
-                  settings.setMediaPlaybackRequiresUserGesture(false);
-                  settings.setAllowFileAccess(false);
-
-                  WebViewAssetLoader loader =
-                      new WebViewAssetLoader.Builder()
-                          .addPathHandler(
-                              "/assets/",
-                              new WebViewAssetLoader.AssetsPathHandler(this))
-                          .build();
-
-                  web.setWebViewClient(new WebViewClient() {
-                      @Override
-                      public android.webkit.WebResourceResponse
-                      shouldInterceptRequest(
-                          WebView view, WebResourceRequest request) {
-                          return loader.shouldInterceptRequest(
-                              request.getUrl());
-                      }
-
-                      @Override
-                      public boolean shouldOverrideUrlLoading(
-                          WebView view, WebResourceRequest request) {
-                          Uri uri = request.getUrl();
-
-                          if ("appassets.androidplatform.net".equals(
-                                  uri.getHost())) {
-                              return false;
-                          }
-
-                          String scheme = uri.getScheme();
-                          if ("https".equalsIgnoreCase(scheme)
-                              || "http".equalsIgnoreCase(scheme)) {
-                              try {
-                                  startActivity(new Intent(
-                                      Intent.ACTION_VIEW, uri));
-                              } catch (Exception ignored) {}
-                          }
-                          return true;
-                      }
-                  });
-
-                  setContentView(web);
-                  web.loadUrl(
-                      "https://appassets.androidplatform.net/assets/index.html");
-              }
-
-              @Override
-              public void onBackPressed() {
-                  if (web != null && web.canGoBack()) {
-                      web.goBack();
-                  } else {
-                      super.onBackPressed();
-                  }
-              }
-
-              @Override
-              protected void onDestroy() {
-                  if (web != null) {
-                      web.destroy();
-                      web = null;
-                  }
-                  super.onDestroy();
-              }
-          }
-          EOF
+          sdkmanager --install "platform-tools" "platforms;android-35" "build-tools;35.0.0"
 
       - name: Compilar APK
-        run: gradle --no-daemon --stacktrace assembleDebug
-
-      - name: Verificar APK
+        shell: bash
         run: |
-          test -s app/build/outputs/apk/debug/app-debug.apk
-          ls -lh app/build/outputs/apk/debug/app-debug.apk
+          set -euo pipefail
+          ROOT="${{ steps.locate.outputs.root }}"
+          cd "$ROOT"
+          if [ -f ./gradlew ]; then
+            chmod +x ./gradlew
+            ./gradlew --no-daemon --stacktrace assembleDebug
+          else
+            echo "Sem Gradle Wrapper; usando Gradle instalado."
+            curl -fsSL https://services.gradle.org/distributions/gradle-8.9-bin.zip -o /tmp/gradle.zip
+            unzip -q /tmp/gradle.zip -d /tmp
+            /tmp/gradle-8.9/bin/gradle --no-daemon --stacktrace assembleDebug
+          fi
+
+      - name: Encontrar e validar APK
+        id: apk
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK=$(find "${{ steps.locate.outputs.root }}" -type f -path "*/build/outputs/apk/*/*.apk" -print -quit)
+          if [ -z "$APK" ]; then
+            echo "::error::A compilação terminou sem gerar APK."
+            exit 1
+          fi
+          mkdir -p output
+          cp "$APK" output/EROM-BOX.apk
+          ls -lh output/EROM-BOX.apk
 
       - name: Disponibilizar APK para baixar
         uses: actions/upload-artifact@v4
         with:
-          name: Erom-Music-APK
-          path: app/build/outputs/apk/debug/app-debug.apk
+          name: EROM-BOX-APK
+          path: output/EROM-BOX.apk
           if-no-files-found: error
           retention-days: 14
