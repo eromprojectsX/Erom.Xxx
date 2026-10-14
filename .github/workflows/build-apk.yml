@@ -4,24 +4,28 @@ on:
   workflow_dispatch:
     inputs:
       pagina_inicial:
-        description: 'Caminho do HTML inicial dentro do ZIP (opcional, ex: Erom/home.html)'
+        description: "HTML inicial relativo à raiz do ZIP; deixe vazio para detectar automaticamente"
         required: false
-        default: ''
+        default: ""
+        type: string
       tipo:
-        description: 'Tipo de build (release exige os Secrets de assinatura)'
+        description: "Tipo de compilação"
+        required: true
         type: choice
         options:
           - debug
           - release
         default: debug
       versao:
-        description: 'Nome da versao (ex: 1.0)'
-        required: false
-        default: '1.0'
+        description: "Versão do aplicativo"
+        required: true
+        default: "1.0"
+        type: string
+
   push:
     paths:
-      - 'Erom-Music-Android-GitHub.zip'
-      - '.github/workflows/build-apk.yml'
+      - "Erom-Music-Android-GitHub.zip"
+      - ".github/workflows/build-apk.yml"
 
 permissions:
   contents: read
@@ -32,92 +36,137 @@ concurrency:
 
 jobs:
   build:
+    name: Compilar Erom Música
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 40
 
     steps:
-      - name: Baixar repositorio
+      - name: Baixar repositório
         uses: actions/checkout@v4
 
-      - name: Preparar Java
+      - name: Configurar Java 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: "17"
 
-      - name: Preparar Android SDK
+      - name: Configurar Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Preparar Gradle (com cache)
+      - name: Instalar componentes Android
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          yes | sdkmanager --licenses >/dev/null 2>&1 || true
+
+          sdkmanager --install \
+            "platform-tools" \
+            "platforms;android-35" \
+            "build-tools;35.0.0"
+
+      - name: Configurar Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: '8.9'
+          gradle-version: "8.9"
 
       - name: Extrair site do ZIP
         shell: bash
         env:
-          ENTRADA: ${{ github.event.inputs.pagina_inicial }}
+          ENTRADA: ${{ inputs.pagina_inicial }}
         run: |
           set -euo pipefail
+
           ZIP="Erom-Music-Android-GitHub.zip"
-          test -f "$ZIP" || { echo "ERRO: ZIP nao encontrado na raiz do repositorio."; exit 1; }
+
+          if [ ! -f "$ZIP" ]; then
+            echo "::error::Não encontrei $ZIP na raiz do repositório."
+            exit 1
+          fi
 
           rm -rf extraido app/src/main/assets
           mkdir -p extraido app/src/main/assets
-          unzip -q "$ZIP" -d extraido -x '__MACOSX/*' '*.DS_Store'
 
-          # Raiz do site: se o ZIP tem uma unica pasta externa, usa ela como raiz
-          ROOT="extraido"
-          TOP_COUNT=$(find extraido -mindepth 1 -maxdepth 1 | wc -l)
-          if [ "$TOP_COUNT" -eq 1 ] && [ -d "$(find extraido -mindepth 1 -maxdepth 1)" ]; then
-            ROOT="$(find extraido -mindepth 1 -maxdepth 1)"
-          fi
-          echo "Raiz do site: $ROOT"
+          unzip -q "$ZIP" -d extraido \
+            -x '__MACOSX/*' '*.DS_Store'
 
-          # Copia a ARVORE INTEIRA (css, js, imagens, audios em qualquer pasta)
-          cp -r "$ROOT"/. app/src/main/assets/
+          # Preserva a estrutura de pastas original do ZIP.
+          cp -r extraido/. app/src/main/assets/
 
-          # HTML principal: 1) caminho informado manualmente; 2) index.html mais proximo
-          # da raiz; 3) primeiro .html encontrado
           HTML=""
+
+          # Aceita um caminho informado pelo usuário.
           if [ -n "${ENTRADA:-}" ]; then
+            if [[ "$ENTRADA" == *".."* ]]; then
+              echo "::error::O caminho informado não é permitido."
+              exit 1
+            fi
+
             HTML="app/src/main/assets/${ENTRADA#/}"
-            test -f "$HTML" || { echo "ERRO: pagina inicial informada nao existe no ZIP: $ENTRADA"; exit 1; }
-          fi
-          if [ -z "$HTML" ]; then
-            HTML=$(find app/src/main/assets -type f -iname 'index.html' | awk '{print gsub("/","/") " " $0}' | sort -n | head -1 | cut -d' ' -f2-)
-          fi
-          if [ -z "$HTML" ]; then
-            HTML=$(find app/src/main/assets -type f \( -iname '*.html' -o -iname '*.htm' \) | sort | head -1)
-          fi
-          test -n "$HTML" || { echo "ERRO: nenhum arquivo HTML encontrado no ZIP."; exit 1; }
-          echo "HTML principal: $HTML"
 
-          echo "Todos os HTML encontrados:"
-          find app/src/main/assets -type f \( -iname '*.html' -o -iname '*.htm' \)
+            if [ ! -f "$HTML" ]; then
+              echo "::error::HTML não encontrado: $ENTRADA"
+              echo "Confira o caminho e execute novamente."
+              exit 1
+            fi
+          fi
 
-          # Se a pagina inicial nao e o index.html da raiz, cria um redirecionamento.
-          # Assim os caminhos relativos do HTML original continuam validos.
+          # Detecta automaticamente o index.html.
+          if [ -z "$HTML" ]; then
+            HTML=$(find app/src/main/assets \
+              -type f -iname 'index.html' -print -quit)
+          fi
+
+          # Se não existir index.html, procura outro HTML.
+          if [ -z "$HTML" ]; then
+            HTML=$(find app/src/main/assets -type f \
+              \( -iname '*.html' -o -iname '*.htm' \) \
+              | sort | head -n 1 || true)
+          fi
+
+          if [ -z "$HTML" ] || [ ! -f "$HTML" ]; then
+            echo "::error::Nenhum arquivo HTML encontrado no ZIP."
+            exit 1
+          fi
+
+          echo "Página inicial encontrada: $HTML"
+
+          # Mantém o HTML original em sua pasta para preservar
+          # os caminhos relativos de imagens, scripts e estilos.
           if [ "$HTML" != "app/src/main/assets/index.html" ]; then
             REL="${HTML#app/src/main/assets/}"
+
+            # Codifica espaços no caminho do redirecionamento.
             REL="${REL// /%20}"
-            cat > app/src/main/assets/index.html <<HTMLEOF
+
+            cat > app/src/main/assets/index.html <<EOF
           <!doctype html>
-          <html><head><meta charset="utf-8">
-          <meta http-equiv="refresh" content="0;url=$REL">
-          <script>location.replace("$REL");</script>
-          </head><body style="background:#000"></body></html>
-          HTMLEOF
+          <html lang="pt-BR">
+          <head>
+            <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <meta http-equiv="refresh" content="0;url=$REL">
+            <title>Erom Música</title>
+          </head>
+          <body style="background:#000;color:#fff">
+            <script>location.replace("$REL");</script>
+            <a href="$REL">Abrir Erom Música</a>
+          </body>
+          </html>
+          EOF
           fi
 
-          echo "--- Conteudo dos assets ---"
-          find app/src/main/assets -type f | head -100
+          echo "Arquivos HTML encontrados:"
+          find app/src/main/assets -type f \
+            \( -iname '*.html' -o -iname '*.htm' \)
 
       - name: Criar projeto Android
         shell: bash
         run: |
           set -euo pipefail
+
           mkdir -p app/src/main/java/com/erom/music
+          mkdir -p app/src/main/res/drawable
 
           cat > settings.gradle <<'EOF'
           pluginManagement {
@@ -127,6 +176,7 @@ jobs:
                   gradlePluginPortal()
               }
           }
+
           dependencyResolutionManagement {
               repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
               repositories {
@@ -134,13 +184,14 @@ jobs:
                   mavenCentral()
               }
           }
+
           rootProject.name = "EromMusic"
-          include ':app'
+          include(":app")
           EOF
 
           cat > build.gradle <<'EOF'
           plugins {
-              id 'com.android.application' version '8.7.3' apply false
+              id "com.android.application" version "8.7.3" apply false
           }
           EOF
 
@@ -151,59 +202,75 @@ jobs:
 
           cat > app/build.gradle <<'EOF'
           plugins {
-              id 'com.android.application'
+              id "com.android.application"
           }
+
           android {
-              namespace 'com.erom.music'
+              namespace "com.erom.music"
               compileSdk 35
+
               defaultConfig {
-                  applicationId 'com.erom.music'
+                  applicationId "com.erom.music"
                   minSdk 23
                   targetSdk 35
-                  versionCode Integer.parseInt((findProperty('appVersionCode') ?: '1').toString())
-                  versionName "${findProperty('appVersionName') ?: '1.0'}".toString()
+                  versionCode Integer.parseInt(
+                      (findProperty("appVersionCode") ?: "1").toString()
+                  )
+                  versionName (findProperty("appVersionName") ?: "1.0").toString()
               }
+
               signingConfigs {
                   release {
-                      if (System.getenv('KEYSTORE_PATH')) {
-                          storeFile file(System.getenv('KEYSTORE_PATH'))
-                          storePassword System.getenv('KEYSTORE_PASSWORD')
-                          keyAlias System.getenv('KEY_ALIAS')
-                          keyPassword System.getenv('KEY_PASSWORD')
+                      if (System.getenv("KEYSTORE_PATH")) {
+                          storeFile file(System.getenv("KEYSTORE_PATH"))
+                          storePassword System.getenv("KEYSTORE_PASSWORD")
+                          keyAlias System.getenv("KEY_ALIAS")
+                          keyPassword System.getenv("KEY_PASSWORD")
                       }
                   }
               }
+
               buildTypes {
                   debug {
                       debuggable true
                   }
+
                   release {
                       minifyEnabled false
-                      if (System.getenv('KEYSTORE_PATH')) {
+                      if (System.getenv("KEYSTORE_PATH")) {
                           signingConfig signingConfigs.release
                       }
                   }
               }
+
               lint {
                   abortOnError false
               }
           }
+
           dependencies {
-              implementation 'androidx.webkit:webkit:1.12.1'
+              implementation "androidx.webkit:webkit:1.12.1"
           }
           EOF
 
-          mkdir -p app/src/main/res/drawable
           cat > app/src/main/res/drawable/ic_launcher.xml <<'EOF'
           <vector xmlns:android="http://schemas.android.com/apk/res/android"
               android:width="108dp"
               android:height="108dp"
               android:viewportWidth="108"
               android:viewportHeight="108">
-              <path android:fillColor="#000000" android:pathData="M0,0h108v108h-108z"/>
-              <path android:fillColor="#FFFFFF" android:pathData="M58,26h6v40h-6z"/>
-              <path android:fillColor="#FFFFFF" android:pathData="M42,68a10,8 0 1,0 20,0a10,8 0 1,0 -20,0z"/>
-              <path android:fillColor="#FFFFFF" android:pathData="M64,26l16,6v10l-16,-6z"/>
+              <path
+                  android:fillColor="#000000"
+                  android:pathData="M0,0h108v108h-108z"/>
+              <path
+                  android:fillColor="#FFFFFF"
+                  android:pathData="M58,26h6v40h-6z"/>
+              <path
+                  android:fillColor="#FFFFFF"
+                  android:pathData="M42,68a10,8 0 1,0 20,0a10,8 0 1,0 -20,0z"/>
+              <path
+                  android:fillColor="#FFFFFF"
+                  android:pathData="M64,26l16,6v10l-16,-6z"/>
           </vector>
           EOF
 
@@ -211,17 +278,20 @@ jobs:
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
               <uses-permission android:name="android.permission.INTERNET"/>
               <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
+
               <application
                   android:theme="@android:style/Theme.Material.Light.NoActionBar"
                   android:label="Erom Música"
                   android:icon="@drawable/ic_launcher"
-                  android:allowBackup="true"
-                  android:usesCleartextTraffic="true">
+                  android:allowBackup="false"
+                  android:usesCleartextTraffic="false">
+
                   <activity
                       android:name=".MainActivity"
                       android:exported="true"
                       android:configChanges="orientation|screenSize|keyboardHidden|smallestScreenSize|screenLayout"
                       android:windowSoftInputMode="adjustResize">
+
                       <intent-filter>
                           <action android:name="android.intent.action.MAIN"/>
                           <category android:name="android.intent.category.LAUNCHER"/>
@@ -236,11 +306,11 @@ jobs:
 
           import android.app.Activity;
           import android.content.Intent;
-          import android.net.Uri;
-          import android.webkit.WebResourceError;
           import android.graphics.Color;
+          import android.net.Uri;
           import android.os.Bundle;
           import android.view.Window;
+          import android.webkit.WebResourceError;
           import android.webkit.WebResourceRequest;
           import android.webkit.WebResourceResponse;
           import android.webkit.WebSettings;
@@ -251,33 +321,37 @@ jobs:
 
           public class MainActivity extends Activity {
               private static final String START_URL =
-                      "https://appassets.androidplatform.net/assets/index.html";
+                  "https://appassets.androidplatform.net/assets/index.html";
 
               private WebView web;
 
               @Override
               protected void onCreate(Bundle state) {
                   super.onCreate(state);
-                  Window w = getWindow();
-                  w.setStatusBarColor(Color.BLACK);
-                  w.setNavigationBarColor(Color.BLACK);
+
+                  Window window = getWindow();
+                  window.setStatusBarColor(Color.BLACK);
+                  window.setNavigationBarColor(Color.BLACK);
 
                   web = new WebView(this);
                   web.setBackgroundColor(Color.BLACK);
 
-                  WebSettings s = web.getSettings();
-                  s.setJavaScriptEnabled(true);
-                  s.setDomStorageEnabled(true);
-                  // Acesso direto a file:// continua bloqueado: os assets sao
-                  // servidos com seguranca pelo WebViewAssetLoader (https).
-                  s.setAllowFileAccess(false);
-                  s.setAllowContentAccess(false);
-                  s.setMediaPlaybackRequiresUserGesture(false);
-                  s.setMixedContentMode(WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE);
+                  WebSettings settings = web.getSettings();
+                  settings.setJavaScriptEnabled(true);
+                  settings.setDomStorageEnabled(true);
+                  settings.setAllowFileAccess(false);
+                  settings.setAllowContentAccess(false);
+                  settings.setMediaPlaybackRequiresUserGesture(false);
+                  settings.setMixedContentMode(
+                      WebSettings.MIXED_CONTENT_NEVER_ALLOW
+                  );
 
-                  final WebViewAssetLoader loader = new WebViewAssetLoader.Builder()
-                          .addPathHandler("/assets/",
-                                  new WebViewAssetLoader.AssetsPathHandler(this))
+                  final WebViewAssetLoader loader =
+                      new WebViewAssetLoader.Builder()
+                          .addPathHandler(
+                              "/assets/",
+                              new WebViewAssetLoader.AssetsPathHandler(this)
+                          )
                           .build();
 
                   web.setWebViewClient(new WebViewClient() {
@@ -287,35 +361,50 @@ jobs:
                           return loader.shouldInterceptRequest(request.getUrl());
                       }
 
-                      // Links para fora do app abrem no navegador/app do sistema
                       @Override
                       public boolean shouldOverrideUrlLoading(
                               WebView view, WebResourceRequest request) {
                           Uri uri = request.getUrl();
+
                           if ("appassets.androidplatform.net".equals(uri.getHost())) {
                               return false;
                           }
-                          try {
-                              startActivity(new Intent(Intent.ACTION_VIEW, uri));
-                          } catch (Exception ignored) {
+
+                          String scheme = uri.getScheme();
+                          if ("https".equalsIgnoreCase(scheme)
+                                  || "http".equalsIgnoreCase(scheme)) {
+                              try {
+                                  startActivity(
+                                      new Intent(Intent.ACTION_VIEW, uri)
+                                  );
+                              } catch (Exception ignored) {
+                              }
+                              return true;
                           }
+
                           return true;
                       }
 
-                      // Pagina principal que falha ao carregar: mostra aviso simples
                       @Override
                       public void onReceivedError(
-                              WebView view, WebResourceRequest request, WebResourceError error) {
+                              WebView view,
+                              WebResourceRequest request,
+                              WebResourceError error) {
                           if (request.isForMainFrame()) {
                               view.loadData(
-                                      "<html><body style='background:#000;color:#fff;"
-                                      + "font-family:sans-serif;text-align:center;padding:48px'>"
-                                      + "<h3>Nao foi possivel carregar a pagina</h3>"
-                                      + "<p>Feche e abra o app novamente.</p></body></html>",
-                                      "text/html", "UTF-8");
+                                  "<html><body style='background:#000;color:#fff;"
+                                  + "font-family:sans-serif;text-align:center;"
+                                  + "padding:40px'>"
+                                  + "<h3>Não foi possível carregar a página</h3>"
+                                  + "<p>Verifique a conexão e tente novamente.</p>"
+                                  + "</body></html>",
+                                  "text/html",
+                                  "UTF-8"
+                              );
                           }
                       }
                   });
+
                   setContentView(web);
 
                   if (state != null) {
@@ -328,12 +417,14 @@ jobs:
               @Override
               protected void onSaveInstanceState(Bundle out) {
                   super.onSaveInstanceState(out);
-                  web.saveState(out);
+                  if (web != null) {
+                      web.saveState(out);
+                  }
               }
 
               @Override
               public void onBackPressed() {
-                  if (web.canGoBack()) {
+                  if (web != null && web.canGoBack()) {
                       web.goBack();
                   } else {
                       super.onBackPressed();
@@ -344,14 +435,15 @@ jobs:
               protected void onDestroy() {
                   if (web != null) {
                       web.destroy();
+                      web = null;
                   }
                   super.onDestroy();
               }
           }
           EOF
 
-      - name: Preparar chave de assinatura (release)
-        if: ${{ github.event.inputs.tipo == 'release' }}
+      - name: Preparar assinatura do release
+        if: ${{ inputs.tipo == 'release' }}
         shell: bash
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
@@ -360,52 +452,79 @@ jobs:
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
           set -euo pipefail
-          for v in KEYSTORE_BASE64 KEYSTORE_PASSWORD KEY_ALIAS KEY_PASSWORD; do
-            [ -n "${!v}" ] || { echo "ERRO: secret $v nao esta configurado no repositorio."; exit 1; }
+
+          for VAR in KEYSTORE_BASE64 KEYSTORE_PASSWORD KEY_ALIAS KEY_PASSWORD; do
+            if [ -z "${!VAR:-}" ]; then
+              echo "::error::Configure o secret $VAR nas configurações do repositório."
+              exit 1
+            fi
           done
+
           echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
           echo "KEYSTORE_PATH=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
 
       - name: Compilar APK
         shell: bash
         env:
-          TIPO: ${{ github.event.inputs.tipo || 'debug' }}
-          VERSAO: ${{ github.event.inputs.versao || '1.0' }}
-          KEYSTORE_PASSWORD: ${{ github.event.inputs.tipo == 'release' && secrets.KEYSTORE_PASSWORD || '' }}
-          KEY_ALIAS: ${{ github.event.inputs.tipo == 'release' && secrets.KEY_ALIAS || '' }}
-          KEY_PASSWORD: ${{ github.event.inputs.tipo == 'release' && secrets.KEY_PASSWORD || '' }}
+          TIPO: ${{ inputs.tipo || 'debug' }}
+          VERSAO: ${{ inputs.versao || '1.0' }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
           set -euo pipefail
-          if [ "$TIPO" = "release" ]; then TASK=assembleRelease; else TASK=assembleDebug; fi
-          gradle --no-daemon --stacktrace "$TASK" \
-            -PappVersionCode=${{ github.run_number }} \
-            -PappVersionName="$VERSAO"
 
-      - name: Verificar conteudo do APK
+          case "$TIPO" in
+            debug) TASK="assembleDebug" ;;
+            release) TASK="assembleRelease" ;;
+            *) echo "::error::Tipo de compilação inválido."; exit 1 ;;
+          esac
+
+          gradle --no-daemon --stacktrace "$TASK" \
+            "-PappVersionCode=${GITHUB_RUN_NUMBER}" \
+            "-PappVersionName=${VERSAO}"
+
+      - name: Verificar APK gerado
         shell: bash
         env:
-          TIPO: ${{ github.event.inputs.tipo || 'debug' }}
+          TIPO: ${{ inputs.tipo || 'debug' }}
         run: |
           set -euo pipefail
+
           if [ "$TIPO" = "release" ]; then
             APK="app/build/outputs/apk/release/app-release.apk"
           else
             APK="app/build/outputs/apk/debug/app-debug.apk"
           fi
+
+          if [ ! -s "$APK" ]; then
+            echo "::error::O APK não foi gerado."
+            exit 1
+          fi
+
           ls -lh "$APK"
-          unzip -l "$APK" | grep -E 'assets/' | head -50
-          unzip -l "$APK" | grep -q 'assets/index.html' || { echo "ERRO: index.html nao esta no APK."; exit 1; }
+
+          unzip -l "$APK" | grep -q 'assets/index.html' || {
+            echo "::error::O APK não contém assets/index.html."
+            exit 1
+          }
 
           if [ "$TIPO" = "release" ]; then
-            APKSIGNER=$(ls -d "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -1)
+            APKSIGNER=$(find "$ANDROID_HOME/build-tools" \
+              -type f -name apksigner | sort -V | tail -n 1)
+
+            if [ -z "$APKSIGNER" ]; then
+              echo "::error::Não encontrei o apksigner."
+              exit 1
+            fi
+
             "$APKSIGNER" verify --print-certs "$APK"
           fi
 
-      - name: Disponibilizar APK
+      - name: Disponibilizar APK para baixar
         uses: actions/upload-artifact@v4
         with:
-          name: Erom-Music-${{ github.event.inputs.tipo || 'debug' }}-${{ github.run_number }}
+          name: Erom-Music-${{ inputs.tipo || 'debug' }}-${{ github.run_number }}
           path: app/build/outputs/apk/*/*.apk
           if-no-files-found: error
           retention-days: 14
-          
