@@ -32,9 +32,17 @@ jobs:
               try: texts.append(p.read_text(errors='ignore'))
               except: pass
           blob='\n'.join(texts)
-          urls=re.findall(r'https://[a-zA-Z0-9-]+\.supabase\.co',blob)
-          keys=re.findall(r'eyJ[A-Za-z0-9_-]{30,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}',blob)
+          urls=re.findall(r'https://[^\s"' + "'" + r'<>]+',blob)
+          urls=[u.rstrip(');,\\\\') for u in urls if 'supabase' in u.lower()]
+          keys=re.findall(r'(?:eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}|sb_publishable_[A-Za-z0-9_-]{10,})',blob)
           if not urls or not keys:
+            print('Arquivos que mencionam Supabase:')
+            for p in root.rglob('*'):
+              if p.is_file() and p.stat().st_size < 5000000:
+                try:
+                  t=p.read_text(errors='ignore')
+                  if 'supabase' in t.lower() or 'anon_key' in t.lower() or 'publishable' in t.lower(): print(str(p))
+                except: pass
             raise SystemExit('Não foi possível localizar URL e chave pública do Supabase no pacote-fonte.')
           from pathlib import Path
           res=Path('native-build/app/src/main/res/values');res.mkdir(parents=True,exist_ok=True)
