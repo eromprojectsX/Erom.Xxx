@@ -28,7 +28,7 @@ jobs:
           root=pathlib.Path('/tmp/erom-source')
           texts=[]
           for p in root.rglob('*'):
-            if p.is_file() and p.suffix.lower() in ('.js','.ts','.tsx','.jsx','.json','.html','.env','.sql'):
+            if p.is_file() and p.stat().st_size < 5000000:
               try: texts.append(p.read_text(errors='ignore'))
               except: pass
           blob='\n'.join(texts)
