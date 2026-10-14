@@ -42,10 +42,10 @@ jobs:
           }
           EOF
           cat > native-build/gradle.properties <<'EOF'
-org.gradle.jvmargs=-Xmx2g -Dfile.encoding=UTF-8
-android.useAndroidX=true
-kotlin.code.style=official
-EOF
+          org.gradle.jvmargs=-Xmx2g -Dfile.encoding=UTF-8
+          android.useAndroidX=true
+          kotlin.code.style=official
+          EOF
           cat > native-build/app/build.gradle <<'EOF'
           plugins {
               id 'com.android.application'
