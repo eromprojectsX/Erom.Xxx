@@ -1,6 +1,9 @@
 package br.com.erommusic.nativeapp
 
 import android.os.Bundle
+import android.content.Context
+import android.content.ActivityNotFoundException
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
@@ -22,7 +25,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.LocalContext
 import android.content.Intent
 import android.net.Uri
@@ -47,8 +49,6 @@ private fun EromMusicApp() {
     var selectedTab by remember { mutableStateOf("Início") }
     var search by remember { mutableStateOf("") }
     val context = LocalContext.current
-    val uriHandler = LocalUriHandler.current
-    val playlistUrl = "https://open.spotify.com/playlist/1ZizK6kXaVPt7bGZcyLMks"
     MaterialTheme(colorScheme = darkColorScheme(
         primary = Green, background = Background, surface = SurfaceDark,
         onPrimary = Color.Black, onBackground = White, onSurface = White
@@ -100,18 +100,9 @@ private fun EromMusicApp() {
                     }
                 }
                 when (selectedTab) {
-                    "Início" -> HomeScreen(onOpenPlaylist = {
-                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(playlistUrl))
-                        context.startActivity(intent)
-                    }, onGoLibrary = { selectedTab = "Sua Biblioteca" })
-                    "Buscar" -> SearchScreen(search, { search = it }, onOpenPlaylist = {
-                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(playlistUrl))
-                        context.startActivity(intent)
-                    })
-                    else -> LibraryScreen(onOpenPlaylist = {
-                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(playlistUrl))
-                        context.startActivity(intent)
-                    }, onGoHome = { selectedTab = "Início" })
+                    "Início" -> HomeScreen(onOpenPlaylist = { openSpotifyPlaylist(context) }, onGoLibrary = { selectedTab = "Sua Biblioteca" })
+                    "Buscar" -> SearchScreen(search, { search = it }, onOpenPlaylist = { openSpotifyPlaylist(context) })
+                    else -> LibraryScreen(onOpenPlaylist = { openSpotifyPlaylist(context) }, onGoHome = { selectedTab = "Início" })
                 }
             }
         }
@@ -227,5 +218,22 @@ private fun LibraryScreen(onOpenPlaylist: () -> Unit, onGoHome: () -> Unit) {
             Spacer(Modifier.width(8.dp))
             Text("Voltar ao início")
         }
+    }
+}
+
+ 
+private fun openSpotifyPlaylist(context: Context) {
+    val spotifyIntent = Intent(
+        Intent.ACTION_VIEW,
+        Uri.parse("spotify:playlist:1ZizK6kXaVPt7bGZcyLMks")
+    ).setPackage("com.spotify.music")
+    try {
+        context.startActivity(spotifyIntent)
+    } catch (_: ActivityNotFoundException) {
+        Toast.makeText(
+            context,
+            "Instale o aplicativo Spotify para abrir sua playlist.",
+            Toast.LENGTH_LONG
+        ).show()
     }
 }
